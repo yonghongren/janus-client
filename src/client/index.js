@@ -1,7 +1,9 @@
 'use strict';
 
 const _ = require('lodash');
+if (typeof window === 'undefined') {
 const WebSocket = require('ws');
+}
 const EventEmitter = require('events').EventEmitter;
 const Transaction = require('../transaction').Transaction;
 const logger = require('debug-logger')('janus:client');
@@ -83,11 +85,19 @@ class Client {
 
     connect() {
         if(this.webSocket === null) {
-            this.webSocket = new this.WebSocket(this.url, this.protocol);
-            this.webSocket.on(WebSocketEvent.open, ()=>{ this.open(); });
-            this.webSocket.on(WebSocketEvent.close, ()=>{ this.close(); });
-            this.webSocket.on(WebSocketEvent.message, (message)=>{ this.message(message); });
-            this.webSocket.on(WebSocketEvent.error, (err)=>{ this.error(err); });
+            if (typeof window === 'undefined') {
+                this.webSocket = new this.WebSocket(this.url, this.protocol);
+                this.webSocket.on(WebSocketEvent.open, ()=>{ this.open(); });
+                this.webSocket.on(WebSocketEvent.close, ()=>{ this.close(); });
+                this.webSocket.on(WebSocketEvent.message, (message)=>{ this.message(message); });
+                this.webSocket.on(WebSocketEvent.error, (err)=>{ this.error(err); });
+            } else {
+                this.webSocket = new WebSocket(this.url, this.protocol);
+                this.webSocket.onopen = () => { this.open(); };
+                this.webSocket.onclose = ()=>{ this.close(); };
+                this.webSocket.onmessage = (message)=>{ this.message(message); };
+                this.webSocket.onerror = (err)=>{ this.error(err); };
+            }
             this.startConnectionTimeout();
         }
     }
@@ -113,10 +123,14 @@ class Client {
         let closeHandler = ()=>{
             this.stopConnectionTimeout();
             if(this.webSocket !== null) {
-                this.webSocket.removeAllListeners(WebSocketEvent.open);
-                this.webSocket.removeAllListeners(WebSocketEvent.message);
-                this.webSocket.removeAllListeners(WebSocketEvent.error);
-                this.webSocket.removeAllListeners(WebSocketEvent.close);
+                if (typeof window === 'undefined') {
+                    this.webSocket.removeAllListeners(WebSocketEvent.open);
+                    this.webSocket.removeAllListeners(WebSocketEvent.message);
+                    this.webSocket.removeAllListeners(WebSocketEvent.error);
+                    this.webSocket.removeAllListeners(WebSocketEvent.close);
+                } else {
+                    this.webSocket.onopen = this.webSocket.onmessage = this.webSocket.onerror = this.webSocket.onclose = null;
+                }
                 this.webSocket = null;
             }
             if(this.lastConnectionEvent === ClientEvent.connected) {
@@ -128,10 +142,14 @@ class Client {
             }
         };
         if(_.isObject(this.webSocket) && this.isConnected()) {
-            this.webSocket.removeAllListeners('close');
-            this.webSocket.on('close', ()=>{
-                closeHandler();
-            });
+            if (typeof window === 'undefined') {
+                this.webSocket.removeAllListeners('close');
+                this.webSocket.on('close', ()=>{
+                    closeHandler();
+                });
+            } else {
+                this.webSocket.onclose = () => { closeHandler(); };
+            }
             this.webSocket.close();
         } else {
             closeHandler();
@@ -140,6 +158,9 @@ class Client {
 
     message(message) {
         this.startConnectionTimeout();
+        if (typeof window === 'object') {
+            message = message.data;
+        }
         let parsedMessage = message;
         try {
             if(_.isString(message)) {
@@ -191,7 +212,7 @@ class Client {
             response = new ClientResponse(transaction.getRequest(), obj);
             transaction.response(response);
         } else if (transactionId !== null) {
-            logger.warn('Rejected response due to none existing session', obj);
+            this.logger.warn('Rejected response due to none existing session', obj);
         } else {
             this.delegateEvent(obj);
         }
@@ -209,7 +230,7 @@ class Client {
                     break;
             }
         } else {
-            logger.info('Rejected event due to none existing session', event);
+            this.logger.info('Rejected event due to none existing session', event);
         }
     }
 
@@ -217,15 +238,22 @@ class Client {
         return new Promise((resolve, reject)=>{
             assert.isObject(obj);
             if(this.isConnected()) {
-                this.webSocket.send(JSON.stringify(obj), (err)=> {
-                    if (_.isObject(err)) {
-                        reject(err);
-                    } else {
-                        this.logger.debug('Sent message', obj);
-                        resolve();
-                    }
-                });
-            } else {
+                if (typeof window === 'undefined') {
+                    this.webSocket.send(JSON.stringify(obj), (err)=> {
+                        if (_.isObject(err)) {
+                            reject(err);
+                        } else {
+                            this.logger.debug('Sent message', obj);
+                            resolve();
+                        }
+                    });
+                } else {
+                    // websocket in browser doesn't have a callback.
+                    this.webSocket.send(JSON.stringify(obj));
+                    this.logger.debug('Sent message', obj);
+                    resolve();
+                }
+        } else {
                 throw new ConnectionStateError(this);
             }
         });
