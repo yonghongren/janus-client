@@ -1,9 +1,6 @@
 'use strict';
 
 const _ = require('lodash');
-if (typeof window === 'undefined') {
-const WebSocket = require('ws');
-}
 const EventEmitter = require('events').EventEmitter;
 const Transaction = require('../transaction').Transaction;
 const logger = require('debug-logger')('janus:client');
